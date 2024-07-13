@@ -11,9 +11,7 @@ namespace Listening
 	void Listen()
 	{
 		CreateNetDriver = decltype(CreateNetDriver)(Memory::MergeOffset(0x50D2BF0));
-		InitHost = decltype(InitHost)(Memory::MergeOffset(0xC61330));
 		SetWorld = decltype(SetWorld)(Memory::MergeOffset(0x4E3E980));
-		PauseBeaconRequests = decltype(PauseBeaconRequests)(Memory::MergeOffset(0x293C9C0));
 		InitListen = decltype(InitListen)(Memory::MergeOffset(0xC61890));
 
 		FName NetDriverDefinition = UKismetStringLibrary::GetDefaultObj()->Conv_StringToName(TEXT("GameNetDriver"));
@@ -36,6 +34,10 @@ namespace Listening
 				LevelCollections[i].NetDriver = NetDriver;
 				
 			}
+
+			void** ReplicationDriverVFT = *(void***)GetWorld()->NetDriver->ReplicationDriver;
+			ServerReplicateActors = decltype(ServerReplicateActors)(ReplicationDriverVFT[0x5E]);
+			
 			SetConsoleTitleA("GS: Listening");
 		}
 	}
