@@ -25,15 +25,9 @@ namespace Hooking {
 	{
 		return 1;
 	}
-	void Patch4()
+	bool Patch4()
 	{
-		return;
-	}
-
-	void (*ServerReadyToStartMatchOriginal)(AFortPlayerController* PlayerController); //No UE Doc For This its a /Script/FortniteGame.Function not a /Script/Engine.Function;
-	void ServerReadyToStartMatchHook(AFortPlayerController* PlayerController)
-	{
-		return ServerReadyToStartMatchOriginal(PlayerController);
+		return false;
 	}
 
 	Enums::ENetMode GetNetMode() { // https://docs.unrealengine.com/4.26/en-US/API/Runtime/Engine/Engine/UWorld/GetNetMode/ UWorldGetNetMode
@@ -55,11 +49,10 @@ namespace Hooking {
 	void (*TickFlushOriginal)(UNetDriver* NetDriver, float DeltaSeconds);
 	void TickFlushHook(UNetDriver* NetDriver, float DeltaSeconds) // https://docs.unrealengine.com/4.26/en-US/API/Runtime/Engine/Engine/UNetDriver/TickFlush/
 	{
-		if (NetDriver && NetDriver->ClientConnections.Num() > 0 && NetDriver->ClientConnections[0]->InternalAck)
+		if (NetDriver->ReplicationDriver)
 		{
 			// ServerReplicateActors https://docs.unrealengine.com/4.26/en-US/API/Runtime/Engine/Engine/UNetDriver/ServerReplicateActors/
-			void** ReplicationDriverVFT = *(void***)GetWorld()->NetDriver->ReplicationDriver;
-			Listening::ServerReplicateActors = decltype(Listening::ServerReplicateActors)(ReplicationDriverVFT[0x5E]);
+			
 			Listening::ServerReplicateActors(NetDriver->ReplicationDriver);
 		}
 		return TickFlushOriginal(NetDriver, DeltaSeconds);
@@ -98,31 +91,43 @@ namespace Hooking {
 			GetGameState()->CurrentPlaylistInfo.MarkArrayDirty();
 			GetGameState()->OnRep_CurrentPlaylistInfo();
 
+			GetGameState()->CurrentPlaylistId = Playlist->PlaylistId;
+			GetGameState()->OnRep_CurrentPlaylistId();
 
-
-			//Dont check for map info, very skunked, + I freed all the playerStartActors so theres no need for this
-
-			GetGameMode()->GameSession = SpawnActor2<AFortGameSessionDedicatedAthena>({});
-			GetGameMode()->GameSession->MaxPlayers = 100;
-
+			GetGameMode()->CurrentPlaylistName = Playlist->PlaylistName;
+			GetGameMode()->CurrentPlaylistId = Playlist->PlaylistId;
+			
 			static bool Listening = false;
 			if (!Listening)
 			{
 				Listening = true;
 				Listening::Listen();
 				
-				GetGameMode()->WarmupRequiredPlayerCount = 1;
-				//Why just why GetGameMode()->DefaultPawnClass = UObject::FindObject<UClass>("/Game/Athena/PlayerPawn_Athena.PlayerPawn_Athena_C");
+				auto TimeSeconds = UGameplayStatics::GetDefaultObj()->GetTimeSeconds(UWorld::GetWorld());
+				auto DR = 60.0f;
+				GetGameState()->WarmupCountdownEndTime = TimeSeconds + DR;
+				GetGameMode()->WarmupCountdownDuration = DR;
+				GetGameState()->WarmupCountdownStartTime = TimeSeconds;
+				GetGameMode()->WarmupEarlyCountdownDuration = DR;
 				GetGameMode()->bWorldIsReady = true;
 			}
 
 		}
 
-		if (GetGameMode()->AlivePlayers.Num() >= 1) return true;
-		LOG("Returning False: bReadyToStartMatch");
-		return false;
+		bool Ret = GameMode->AlivePlayers.Num() > 0;
+		if (!Ret)
+		{
+			auto TimeSeconds = UGameplayStatics::GetDefaultObj()->GetTimeSeconds(UWorld::GetWorld());
+			auto DR = 60.0f;
+			GetGameState()->WarmupCountdownEndTime = TimeSeconds + DR;
+			GetGameMode()->WarmupCountdownDuration = DR;
+			GetGameState()->WarmupCountdownStartTime = TimeSeconds;
+			GetGameMode()->WarmupEarlyCountdownDuration = DR;
+		}
+
+		return Ret;
 	}
-        static uint8 NextTeam = 3; //Dont change or bad sigma
+	static uint8 NextTeam = 3; //Dont change or bad sigma
 	static uint8 LastPlayers = 0;
 	EFortTeam PickTeamHook(AFortGameModeAthena* GM, uint8 Preffered, AFortPlayerControllerAthena* PC)
 	{
@@ -137,18 +142,17 @@ namespace Hooking {
 
 		return EFortTeam(Return);
 	}
+	
+
 	void (*HandleStartingNewPlayerOG)(AFortGameModeAthena* GM, AFortPlayerControllerAthena* PC);
 	void HandleStartingNewPlayerHook(AFortGameModeAthena* GM, AFortPlayerControllerAthena* PC)
 	{
-		((AFortPlayerStateAthena*)PC->PlayerState)->SquadId = ((AFortPlayerStateAthena*)PC->PlayerState)->TeamIndex - 3;
-		((AFortPlayerStateAthena*)PC->PlayerState)->OnRep_SquadId();
-		
-		FGameMemberInfo PlayerInfo = FGameMemberInfo();
+		FGameMemberInfo PlayerInfo;
+		PlayerInfo.MostRecentArrayReplicationKey = -1;
 		PlayerInfo.ReplicationID = -1;
 		PlayerInfo.ReplicationKey = -1;
-		PlayerInfo.MostRecentArrayReplicationKey = -1;
-		PlayerInfo.TeamIndex = ((AFortPlayerStateAthena*)PC->PlayerState)->TeamIndex;
 		PlayerInfo.SquadId = ((AFortPlayerStateAthena*)PC->PlayerState)->SquadId;
+		PlayerInfo.TeamIndex = ((AFortPlayerStateAthena*)PC->PlayerState)->TeamIndex;
 		PlayerInfo.MemberUniqueId = PC->PlayerState->UniqueId;
 
 		GetGameState()->GameMemberInfoArray.Members.Add(PlayerInfo);
